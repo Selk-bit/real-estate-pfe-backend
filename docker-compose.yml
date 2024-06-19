@@ -1,0 +1,23 @@
+version: '3'
+
+services:
+#  django:
+#    build: .
+#    command: python manage.py runserver 0.0.0.0:8000
+#    volumes:
+#      - .:/code
+#    ports:
+#      - "8000:8000"
+#    depends_on:
+#      - redis
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"
+#  celery:
+#    build: .
+#    command: celery -A real_estate_project worker --loglevel=info
+#    volumes:
+#      - .:/code
+#    depends_on:
+#      - redis
