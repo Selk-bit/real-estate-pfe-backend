@@ -4,6 +4,7 @@ from django.contrib.auth.models import User
 from rest_framework.authtoken.models import Token
 import json
 
+
 class Equipment(models.Model):
     name = models.CharField(max_length=100)
     description = models.TextField(null=True, blank=True)

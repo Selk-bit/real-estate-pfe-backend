@@ -2,6 +2,7 @@ from rest_framework import serializers
 from .models import House, Equipment, HouseImage, HouseVideo, HouseEquipment
 from django.contrib.auth.models import User
 from .models import UserProfile, Favorite
+from django.conf import settings
 
 
 class EquipmentSerializer(serializers.ModelSerializer):
@@ -11,27 +12,35 @@ class EquipmentSerializer(serializers.ModelSerializer):
 
 
 class HouseEquipmentSerializer(serializers.ModelSerializer):
-    # equipment = EquipmentSerializer(read_only=True)
-
     class Meta:
         model = HouseEquipment
         fields = '__all__'
 
 
 class HouseImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = HouseImage
         fields = '__all__'
 
+    def get_image_url(self, obj):
+        return f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/{settings.AWS_LOCATION}/{obj.image}"
+
 
 class HouseVideoSerializer(serializers.ModelSerializer):
+    video_url = serializers.SerializerMethodField()
+
     class Meta:
         model = HouseVideo
         fields = '__all__'
 
 
+    def get_video_url(self, obj):
+        return f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/{settings.AWS_LOCATION}/{obj.video}"
+
+
 class HouseSerializer(serializers.ModelSerializer):
-    # equipment_details = HouseEquipmentSerializer(source='houseequipment_set', many=True, read_only=True)
     total_interest = serializers.ReadOnlyField()
     equipment = EquipmentSerializer(many=True, read_only=True)
     images = HouseImageSerializer(many=True, read_only=True)
@@ -40,15 +49,15 @@ class HouseSerializer(serializers.ModelSerializer):
     owner_picture = serializers.SerializerMethodField()
     phone = serializers.SerializerMethodField()
     favorite = serializers.SerializerMethodField()
-
+    mine = serializers.SerializerMethodField()
 
     class Meta:
         model = House
         fields = [
             'id', 'title', 'description', 'house_type', 'age', 'number_of_rooms',
-            'surface', 'rentability', 'price', 'interest_percentage', 'floor_number', 'number_of_salons',
+            'surface', 'rentability', 'price', 'interest_percentage', 'floor_number', 'number_of_salons', 'number_of_toilets',
             'city', 'address', 'total_interest', 'equipment', 'images', 'videos', 'owner_name', 'owner_picture', 'phone',
-            'favorite'
+            'favorite', 'mine'
         ]
 
     def get_owner_name(self, obj):
@@ -72,6 +81,14 @@ class HouseSerializer(serializers.ModelSerializer):
             favorite = Favorite.objects.filter(user=user, house=house).exists()
             return favorite
         return False
+
+    def get_mine(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            user = request.user
+            return obj.owner == user
+        return False
+
 
 
 class UserProfileSerializer(serializers.ModelSerializer):

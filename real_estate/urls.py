@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import HouseListCreate, EquipmentListCreate, HouseImageListCreate, HouseVideoListCreate, \
+from .views import HouseListCreate, HouseListUpdate, EquipmentListCreate, HouseImageListCreate, HouseVideoListCreate, \
     HouseEquipmentCreate, HouseViewSet, UserViewSet, EquipmentViewSet, HouseSearchAPIView, HouseSearchPrompt, SignoutAPIView, \
     SignupAPIView, AddFavoriteAPIView, ListFavoritesAPIView, CreateHouseAPIView, UpdateHouseAPIView, DeleteHouseAPIView, \
     ListUserHousesAPIView, UpdateLocationAPIView, RemoveFromFavoriteAPIView, UpdateUserPrompt, CheckTokenView, CustomObtainAuthToken, isFavorite
@@ -14,6 +14,7 @@ router.register(r'equipment', EquipmentViewSet)
 
 api_urlpatterns = [
     path('houses/list/create', HouseListCreate.as_view(), name='house-create'),
+    path('houses/list/update/<int:house_id>', HouseListUpdate.as_view(), name='house-create'),
     path('equipments/', EquipmentListCreate.as_view(), name='equipment-create'),
     path('house_equip/', HouseEquipmentCreate.as_view(), name='house-equipment-create'),
     path('images/', HouseImageListCreate.as_view(), name='images-create'),

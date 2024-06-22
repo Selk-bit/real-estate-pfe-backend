@@ -2,7 +2,7 @@ from rest_framework.views import APIView
 from rest_framework import viewsets, status
 from rest_framework.response import Response
 from rest_framework import status
-from .models import House, HouseEquipment, Equipment, HouseImage, Prompt, Favorite, UserLocation, Searchable, UserProfile, Synonyms
+from .models import House, HouseEquipment, Equipment, HouseImage, HouseVideo, Prompt, Favorite, UserLocation, Searchable, UserProfile, Synonyms
 from .serializers import HouseSerializer, EquipmentSerializer, HouseImageSerializer, HouseVideoSerializer, \
     HouseEquipmentSerializer, UserSerializer
 from .filters import HouseFilter
@@ -19,7 +19,7 @@ import base64
 import environ
 from rest_framework.authtoken.views import ObtainAuthToken
 from django.db.models import Q
-
+import json
 
 class CheckTokenView(APIView):
     permission_classes = [IsAuthenticated]
@@ -213,6 +213,13 @@ class HouseViewSet(viewsets.ReadOnlyModelViewSet):
                 self.queryset = self.queryset.filter(pk__in=houses_ids).all()
             except ValueError:
                 pass
+        if "myproperties" in self.request.query_params:
+            user_id = self.request.query_params.get("myproperties")
+            try:
+                user = User.objects.get(id=user_id)
+                self.queryset = self.queryset.filter(owner=user).all()
+            except ValueError:
+                pass
 
         return self.queryset
 
@@ -346,6 +353,7 @@ class UserViewSet(viewsets.ModelViewSet):
 class EquipmentViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Equipment.objects.all()
     serializer_class = EquipmentSerializer
+    pagination_class = None
 
 
 class ListUserHousesAPIView(APIView):
@@ -406,15 +414,194 @@ class DeleteHouseAPIView(APIView):
 
 
 class HouseListCreate(APIView):
+
     def post(self, request, format=None):
+        env = environ.Env()
+        environ.Env.read_env()
         existing_house = House.objects.filter(title__iexact=request.data.get('title')).first()
         if existing_house:
-            serializer = HouseSerializer(existing_house)
+            serializer = HouseSerializer(existing_house, context={'request': request})
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-        serializer = HouseSerializer(data=request.data)
+        serializer = HouseSerializer(data=request.data, context={'request': request})
+
         if serializer.is_valid():
-            serializer.save()
+            house = serializer.save()
+
+            if request and request.user.is_authenticated:
+                user = request.user
+                house.owner = user
+                house.save()
+
+            equipment_data = []
+            for key in request.data:
+                if key.startswith('equipment'):
+                    index = key.split('[')[1].split(']')[0]
+                    field = key.split('[')[2].split(']')[0]
+                    while len(equipment_data) <= int(index):
+                        equipment_data.append({})
+                    equipment_data[int(index)][field] = request.data[key]
+
+            for equipment in equipment_data:
+                eq = Equipment.objects.filter(id=int(equipment["equipment"])).first()
+                if eq:
+                    HouseEquipment.objects.create(house=house, equipment=eq, quantity=equipment["quantity"])
+
+            # Handle images
+            images = request.FILES.getlist('images')
+            for image in images:
+                image_data = image.read()
+                imgstr = base64.b64encode(image_data).decode('utf-8')
+                ext = image.name.split('.')[-1]
+                file_name = f'{house.title}_image_{image.name}'
+                img_data = base64.b64decode(imgstr)
+
+                s3 = boto3.client(
+                    's3',
+                    aws_access_key_id=env('AWS_ACCESS_KEY_ID'),
+                    aws_secret_access_key=env('AWS_SECRET_ACCESS_KEY')
+                )
+                s3.upload_fileobj(
+                    ContentFile(img_data),
+                    env('AWS_STORAGE_BUCKET_NAME'),
+                    f"{env('AWS_LOCATION')}/{file_name}",
+                    ExtraArgs={
+                        'ACL': env('AWS_DEFAULT_ACL'),
+                        'CacheControl': 'max-age=86400',
+                        'ContentType': image.content_type
+                    }
+                )
+
+                house_image = HouseImage(house=house, image=file_name, name=image.name)
+                house_image.save()
+
+            # Handle videos
+            videos = request.FILES.getlist('videos')
+            for video in videos:
+                video_data = video.read()
+                vidstr = base64.b64encode(video_data).decode('utf-8')
+                ext = video.name.split('.')[-1]
+                file_name = f'{house.title}_video_{video.name}'
+                vid_data = base64.b64decode(vidstr)
+
+                s3 = boto3.client(
+                    's3',
+                    aws_access_key_id=env('AWS_ACCESS_KEY_ID'),
+                    aws_secret_access_key=env('AWS_SECRET_ACCESS_KEY')
+                )
+                s3.upload_fileobj(
+                    ContentFile(vid_data),
+                    env('AWS_STORAGE_BUCKET_NAME'),
+                    f"{env('AWS_LOCATION')}/{file_name}",
+                    ExtraArgs={
+                        'ACL': env('AWS_DEFAULT_ACL'),
+                        'CacheControl': 'max-age=86400',
+                        'ContentType': video.content_type
+                    }
+                )
+
+                house_video = HouseVideo(house=house, video=file_name)
+                house_video.save()
+
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class HouseListUpdate(APIView):
+
+    def put(self, request, house_id, format=None):
+        env = environ.Env()
+        environ.Env.read_env()
+        if not house_id:
+            return Response({'error': 'No Property ID sent'}, status=status.HTTP_400_BAD_REQUEST)
+        existing_house = House.objects.filter(pk=house_id).first()
+        if not existing_house:
+            return Response({'error': 'No Property Found with This Id'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = HouseSerializer(existing_house, data=request.data, context={'request': request})
+
+        if serializer.is_valid():
+            house = serializer.save()
+
+            equipment_data = []
+            for key in request.data:
+                if key.startswith('equipment'):
+                    index = key.split('[')[1].split(']')[0]
+                    field = key.split('[')[2].split(']')[0]
+                    while len(equipment_data) <= int(index):
+                        equipment_data.append({})
+                    equipment_data[int(index)][field] = request.data[key]
+
+            # Clear existing equipment and re-add
+            HouseEquipment.objects.filter(house=house).delete()
+            for equipment in equipment_data:
+                eq = Equipment.objects.filter(id=int(equipment["equipment"])).first()
+                if eq:
+                    HouseEquipment.objects.create(house=house, equipment=eq, quantity=equipment["quantity"])
+
+            new_images = request.FILES.getlist('new_images')
+            for image in new_images:
+                image_data = image.read()
+                imgstr = base64.b64encode(image_data).decode('utf-8')
+                ext = image.name.split('.')[-1]
+                file_name = f'{house.title}_image_{image.name}'
+                img_data = base64.b64decode(imgstr)
+
+                s3 = boto3.client(
+                    's3',
+                    aws_access_key_id=env('AWS_ACCESS_KEY_ID'),
+                    aws_secret_access_key=env('AWS_SECRET_ACCESS_KEY')
+                )
+                s3.upload_fileobj(
+                    ContentFile(img_data),
+                    env('AWS_STORAGE_BUCKET_NAME'),
+                    f"{env('AWS_LOCATION')}/{file_name}",
+                    ExtraArgs={
+                        'ACL': env('AWS_DEFAULT_ACL'),
+                        'CacheControl': 'max-age=86400',
+                        'ContentType': image.content_type
+                    }
+                )
+
+                house_image = HouseImage(house=existing_house, image=file_name, name=image.name)
+                house_image.save()
+
+            # Handle new videos
+            new_videos = request.FILES.getlist('new_videos')
+            for video in new_videos:
+                video_data = video.read()
+                vidstr = base64.b64encode(video_data).decode('utf-8')
+                ext = video.name.split('.')[-1]
+                file_name = f'{house.title}_video_{video.name}'
+                vid_data = base64.b64decode(vidstr)
+
+                s3 = boto3.client(
+                    's3',
+                    aws_access_key_id=env('AWS_ACCESS_KEY_ID'),
+                    aws_secret_access_key=env('AWS_SECRET_ACCESS_KEY')
+                )
+                s3.upload_fileobj(
+                    ContentFile(vid_data),
+                    env('AWS_STORAGE_BUCKET_NAME'),
+                    f"{env('AWS_LOCATION')}/{file_name}",
+                    ExtraArgs={
+                        'ACL': env('AWS_DEFAULT_ACL'),
+                        'CacheControl': 'max-age=86400',
+                        'ContentType': video.content_type
+                    }
+                )
+
+                house_video = HouseVideo(house=existing_house, video=file_name)
+                house_video.save()
+
+            # Handle existing images and remove the ones not present in request
+            existing_images = [value.split(env("S3_SUFFIX"))[-1] for key, value in request.data.items() if key.startswith('existing_images')]
+            HouseImage.objects.filter(house=existing_house).exclude(image__in=existing_images).delete()
+
+            # Handle existing videos and remove the ones not present in request
+            existing_videos = [value.split(env("S3_SUFFIX"))[-1] for key, value in request.data.items() if key.startswith('existing_videos')]
+            HouseVideo.objects.filter(house=existing_house).exclude(video__in=existing_videos).delete()
+
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
